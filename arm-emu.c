@@ -15,7 +15,7 @@
 #define MAX_ARGS        5
 #define MAX_INSTR       128
 
-// Sim params
+// Emulator params
 #define PROMPT  "arm-emu"
 
 typedef unsigned int uint;
@@ -72,13 +72,13 @@ typedef struct {
     uint pc;
 } asml_t;
 
-// Simulator
+// Emulator descriptor
 typedef struct {
     cmd_t prog[MAX_INSTR];
     asml_t ld[MAX_INSTR];
-} sim_t;
+} emu_t;
 
-sim_t sim = {0};
+emu_t emu = {0};
 
 static int cmd_parse(cmd_t *cmd)
 {
@@ -203,40 +203,40 @@ static uint arm_getval(cmd_t *cmd, uint argnum)
     return val;
 }
 
-static uint sim_getlabelpc(sim_t *sim, char *label)
+static uint emu_getlabelpc(emu_t *emu, char *label)
 {
-    for (uint i = 0; i < NELEMS(sim->ld); ++i) {
-        if (strncmp(sim->ld[i].label, label, strlen(label)) == 0) {
-            return sim->ld[i].pc;
+    for (uint i = 0; i < NELEMS(emu->ld); ++i) {
+        if (strncmp(emu->ld[i].label, label, strlen(label)) == 0) {
+            return emu->ld[i].pc;
         }
     }
 
     return -1;
 }
 
-static void sim_printprog(sim_t *sim)
+static void emu_printprog(emu_t *emu)
 {
     printf("\033[34;1m");
     printf("PROG:\n");
-    for (uint i = 0; i < NELEMS(sim->prog); ++i) {
-        if (sim->prog[i].raw_cmd[0] == '\0') {
+    for (uint i = 0; i < NELEMS(emu->prog); ++i) {
+        if (emu->prog[i].raw_cmd[0] == '\0') {
             break;
         }
         printf("\t");
-        cmd_printraw(&sim->prog[i]);
+        cmd_printraw(&emu->prog[i]);
     }
     printf("\033[0m");
 }
 
-static void sim_printlabels(sim_t *sim)
+static void emu_printlabels(emu_t *emu)
 {
     printf("\033[33;1m");
     printf("LABELS:\n");
-    for (uint i = 0; i < NELEMS(sim->ld); ++i) {
-        if (sim->ld[i].label[0] == '\0') {
+    for (uint i = 0; i < NELEMS(emu->ld); ++i) {
+        if (emu->ld[i].label[0] == '\0') {
             break;
         }
-        printf("\tLabel: %s, PC: %d\n", sim->ld[i].label, sim->ld[i].pc);
+        printf("\tLabel: %s, PC: %d\n", emu->ld[i].label, emu->ld[i].pc);
     }
     printf("\033[0m");
 }
@@ -244,7 +244,7 @@ static void sim_printlabels(sim_t *sim)
 static void arm_state(reg_t *regs)
 {
     printf("\033[32;1m");
-    printf("ARM processor simulator state:\n");
+    printf("ARM processor emulator state:\n");
     printf("\tR0:\t0x%08X\n", regs->r[0]);
     printf("\tR1:\t0x%08X\n", regs->r[1]);
     printf("\tR2:\t0x%08X\n", regs->r[2]);
@@ -270,12 +270,12 @@ static void arm_state(reg_t *regs)
     printf("\033[0m");
 }
 
-static void sim_addlabel(sim_t *sim, cmd_t *cmd, uint pc)
+static void emu_addlabel(emu_t *emu, cmd_t *cmd, uint pc)
 {
-    for (uint i = 0; i < NELEMS(sim->ld); ++i) {
-        if (sim->ld[i].label[0] == '\0') {
-            memcpy(sim->ld[i].label, cmd->args[0], strlen(cmd->args[0]));
-            sim->ld[i].pc = pc;
+    for (uint i = 0; i < NELEMS(emu->ld); ++i) {
+        if (emu->ld[i].label[0] == '\0') {
+            memcpy(emu->ld[i].label, cmd->args[0], strlen(cmd->args[0]));
+            emu->ld[i].pc = pc;
             break;
         }
     }
@@ -314,29 +314,29 @@ int arm_run(reg_t *regs, cmd_t *cmd)
             fgets(cmd1.raw_cmd, sizeof(cmd1.raw_cmd), instrf);
             cmd_parse(&cmd1);
             // printf("Read line: %s\n", cmd1.raw_cmd);
-            sim.prog[cline] = cmd1;
+            emu.prog[cline] = cmd1;
             ++cline;
         }
         fclose(instrf);
 
         // Add labels
         uint i = 0;
-        while (sim.prog[i].raw_cmd[0] != '\0') {
-            if (sim.prog[i].is_label) {
-                sim_addlabel(&sim, &sim.prog[i], i);
+        while (emu.prog[i].raw_cmd[0] != '\0') {
+            if (emu.prog[i].is_label) {
+                emu_addlabel(&emu, &emu.prog[i], i);
             }
             ++i;
         }
 
-        sim_printprog(&sim);
-        sim_printlabels(&sim);
+        emu_printprog(&emu);
+        emu_printlabels(&emu);
 
         // Run program
         memset(regs, 0, sizeof(*regs));
         i = 0;
-        while (sim.prog[regs->pc].raw_cmd[0] != '\0') {
+        while (emu.prog[regs->pc].raw_cmd[0] != '\0') {
             // printf("PC: %d\n", regs->pc);
-            arm_run(regs, &(sim.prog[regs->pc]));
+            arm_run(regs, &(emu.prog[regs->pc]));
             ++i;
             if (i > 20) {
                 break;
@@ -386,7 +386,7 @@ int arm_run(reg_t *regs, cmd_t *cmd)
         break;
     case BLT:
         if (!GETBIT(regs->psr, PSR_Z) && GETBIT(regs->psr, PSR_N)) {
-            regs->pc = sim_getlabelpc(&sim, cmd->args[1]);
+            regs->pc = emu_getlabelpc(&emu, cmd->args[1]);
         } else {
             ++regs->pc;
         }
@@ -408,7 +408,7 @@ int main(void)
 {
     cmd_t command = {0};
     reg_t registers = {0};
-    // sim_t sim = {0};
+    // emu_t emu = {0};
 
     while (true) {
         memset(&command, 0, sizeof(command));
