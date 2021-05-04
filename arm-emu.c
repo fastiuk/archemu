@@ -85,49 +85,52 @@ static int cmd_parse(cmd_t *cmd)
     char *pos = NULL;
     uint pos1 = 0;
     uint pos2 = 0;
+    char command[COMMAND_SIZE]; 
 
-    pos = cmd->raw_cmd;
+    memcpy(command, cmd->raw_cmd, sizeof(command));
+    pos = command;
 
     // Convert all to lowercase
-    for (uint i = 0; i <= strlen(cmd->raw_cmd); ++i) {
-        cmd->raw_cmd[i] = tolower(cmd->raw_cmd[i]);
+    for (uint i = 0; i <= strlen(command); ++i) {
+        command[i] = tolower(command[i]);
     }
 
     // Remove all special symbols
-    for (uint i = 0; i <= strlen(cmd->raw_cmd); ++i) {
+    for (uint i = 0; i <= strlen(command); ++i) {
         // Remove commas
-        if (cmd->raw_cmd[i] == ',') {
-           cmd->raw_cmd[i] = ' ';
+        if (command[i] == ',') {
+           command[i] = ' ';
            continue;
         }
 
         // Remove newlines
-        if (cmd->raw_cmd[i] == '\n') {
+        if (command[i] == '\n') {
+           command[i] = '\0';
            cmd->raw_cmd[i] = '\0';
            continue;
         }
 
         // Remove tabs
-        if (cmd->raw_cmd[i] == '\t') {
-           cmd->raw_cmd[i] = ' ';
+        if (command[i] == '\t') {
+           command[i] = ' ';
            continue;
         }
     }
 
     for (uint i = 0, cont = 1; cont && i < MAX_ARGS; ++i) {
-        while (cmd->raw_cmd[pos1] == ' ') {
+        while (command[pos1] == ' ') {
             ++pos1;
         }
 
-        pos = strchr(cmd->raw_cmd + pos1, ' ');
+        pos = strchr(command + pos1, ' ');
         if (pos) {
-            pos2 = pos - cmd->raw_cmd;
+            pos2 = pos - command;
         } else {
-            pos2 = pos1 + strlen(cmd->raw_cmd + pos1);
+            pos2 = pos1 + strlen(command + pos1);
             cont = 0;
         }
 
-        memcpy(cmd->args[i], cmd->raw_cmd + pos1, pos2 - pos1);
+        memcpy(cmd->args[i], command + pos1, pos2 - pos1);
         
         pos1 = pos2;
     }
