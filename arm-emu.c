@@ -46,27 +46,37 @@ enum {
     PSR_N,
 };
 
-// Emulator instruction enumeration
+// ARM instruction enumeration
 typedef enum {
-    BAD,    // Bad instruction
-    STATE,  // State command - emulator instruction
-    LOAD,   // Load asm file - emulator instruction
+    ARMBAD, // Bad instruction
     MOV,    // Move
     CMP,    // Compare
     BLT,    // Branch less then
-} opcode_t;
+} arm_opcode_t;
 
-// Emulator instruction descriptor
+// Emulator instruction enumeration
+typedef enum {
+    EMUBAD, // Bad instruction
+    LOAD,   // Load asm file
+    STATE,  // State proc registers command
+} emu_opcode_t;
+
+// ARM instruction descriptor
 static const char arminstr[][ARG_SIZE] = {
-    [BAD] = "",
-    [LOAD] = "load",
-    [STATE] = "state",
+    [ARMBAD] = "",
     [MOV] = "mov",
     [CMP] = "cmp",
     [BLT] = "blt",
 };
 
-// Label descriptor
+// Emulator instruction descriptor
+static const char emuinstr[][ARG_SIZE] = {
+    [EMUBAD] = "",
+    [LOAD] = "load",
+    [STATE] = "state",
+};
+
+// ASM label descriptor
 typedef struct {
     char label[ARG_SIZE];
     uint pc;
@@ -77,8 +87,6 @@ typedef struct {
     cmd_t prog[MAX_INSTR];
     asml_t ld[MAX_INSTR];
 } emu_t;
-
-emu_t emu = {0};
 
 static int cmd_parse(cmd_t *cmd)
 {
@@ -156,7 +164,13 @@ static void cmd_printraw(cmd_t *cmd)
     printf("%s\n", cmd->raw_cmd);
 }
 
-static opcode_t arm_getopcode(cmd_t *cmd)
+static void cmd_printargs(cmd_t *cmd)
+{
+    printf("%s %s %s %s %s\n", cmd->args[0], cmd->args[1], cmd->args[2],
+           cmd->args[3], cmd->args[4]);
+}
+
+static arm_opcode_t arm_getopcode(cmd_t *cmd)
 {
     uint len = 0;
 
@@ -168,7 +182,21 @@ static opcode_t arm_getopcode(cmd_t *cmd)
         }
     }
 
-    return 0;
+    return ARMBAD;
+}
+
+static emu_opcode_t emu_getopcode(cmd_t *cmd)
+{
+    uint len = 0;
+
+    for (uint i = 0; i < NELEMS(emuinstr); ++i) {
+        len = strlen(emuinstr[i]);
+        if (len && strncmp(cmd->args[0], emuinstr[i], len) == 0) {
+            return i;
+        }
+    }
+
+    return EMUBAD;
 }
 
 static uint arm_getregnum(cmd_t *cmd, uint argnum)
@@ -203,17 +231,6 @@ static uint arm_getval(cmd_t *cmd, uint argnum)
     return val;
 }
 
-static uint emu_getlabelpc(emu_t *emu, char *label)
-{
-    for (uint i = 0; i < NELEMS(emu->ld); ++i) {
-        if (strncmp(emu->ld[i].label, label, strlen(label)) == 0) {
-            return emu->ld[i].pc;
-        }
-    }
-
-    return -1;
-}
-
 static void emu_printprog(emu_t *emu)
 {
     printf("\033[34;1m");
@@ -224,19 +241,7 @@ static void emu_printprog(emu_t *emu)
         }
         printf("\t");
         cmd_printraw(&emu->prog[i]);
-    }
-    printf("\033[0m");
-}
-
-static void emu_printlabels(emu_t *emu)
-{
-    printf("\033[33;1m");
-    printf("LABELS:\n");
-    for (uint i = 0; i < NELEMS(emu->ld); ++i) {
-        if (emu->ld[i].label[0] == '\0') {
-            break;
-        }
-        printf("\tLabel: %s, PC: %d\n", emu->ld[i].label, emu->ld[i].pc);
+        // cmd_printargs(&emu->prog[i]);
     }
     printf("\033[0m");
 }
@@ -270,12 +275,14 @@ static void arm_state(reg_t *regs)
     printf("\033[0m");
 }
 
-static void emu_addlabel(emu_t *emu, cmd_t *cmd, uint pc)
+static void emu_resolvelabel(emu_t *emu, cmd_t *cmd, uint pc)
 {
-    for (uint i = 0; i < NELEMS(emu->ld); ++i) {
-        if (emu->ld[i].label[0] == '\0') {
-            memcpy(emu->ld[i].label, cmd->args[0], strlen(cmd->args[0]));
-            emu->ld[i].pc = pc;
+    for (uint i = 0; i < NELEMS(emu->prog); ++i) {
+        // Typically label is arg1 of each supported instruction
+        if (strncmp(cmd->args[0], emu->prog[i].args[1],
+                    strlen(cmd->args[0]) - 1) == 0) {
+            printf("Replacing: %s\n", emu->prog[i].args[1]);
+            snprintf(emu->prog[i].args[1], sizeof(emu->prog[i].args[1]), "#%d", pc);
             break;
         }
     }
@@ -283,71 +290,17 @@ static void emu_addlabel(emu_t *emu, cmd_t *cmd, uint pc)
 
 int arm_run(reg_t *regs, cmd_t *cmd)
 {
-    opcode_t op = 0;
     uint val1 = 0;
     uint val2 = 0;
     uint reg1 = 0;
     uint reg2 = 0;
-    FILE *instrf = NULL;
-    cmd_t cmd1 = {0};
-
-    cmd_parse(cmd);
     
-    printf("Run: PC - %08X, instr - ", regs->pc);
-    cmd_printraw(cmd);
+    printf("\033[36m");
+    printf("Run: PC - 0x%02X, instr - ", regs->pc);
+    cmd_printargs(cmd);
+    printf("\033[0m");
 
-    op = arm_getopcode(cmd);
-    // printf("Opcode: %d\n", op);
-
-    switch (op) {
-    case LOAD: {// TODO: wip        
-        // Load program from file
-        uint cline = 0;
-        instrf = fopen(cmd->args[1], "r");
-        if (!instrf) {
-            printf("File: %s - opening failed\n", cmd->args[1]);
-            break;
-        }
-
-        while (!feof(instrf)) {
-            memset(&cmd1, 0, sizeof(cmd1));
-            fgets(cmd1.raw_cmd, sizeof(cmd1.raw_cmd), instrf);
-            cmd_parse(&cmd1);
-            // printf("Read line: %s\n", cmd1.raw_cmd);
-            emu.prog[cline] = cmd1;
-            ++cline;
-        }
-        fclose(instrf);
-
-        // Add labels
-        uint i = 0;
-        while (emu.prog[i].raw_cmd[0] != '\0') {
-            if (emu.prog[i].is_label) {
-                emu_addlabel(&emu, &emu.prog[i], i);
-            }
-            ++i;
-        }
-
-        emu_printprog(&emu);
-        emu_printlabels(&emu);
-
-        // Run program
-        memset(regs, 0, sizeof(*regs));
-        i = 0;
-        while (emu.prog[regs->pc].raw_cmd[0] != '\0') {
-            // printf("PC: %d\n", regs->pc);
-            arm_run(regs, &(emu.prog[regs->pc]));
-            ++i;
-            if (i > 20) {
-                break;
-            }
-        }
-
-        break;
-    }
-    case STATE:
-        arm_state(regs);
-        break;
+    switch (arm_getopcode(cmd)) {
     case MOV:
         reg1 = arm_getregnum(cmd, 1);
         reg2 = arm_getregnum(cmd, 2);
@@ -386,7 +339,7 @@ int arm_run(reg_t *regs, cmd_t *cmd)
         break;
     case BLT:
         if (!GETBIT(regs->psr, PSR_Z) && GETBIT(regs->psr, PSR_N)) {
-            regs->pc = emu_getlabelpc(&emu, cmd->args[1]);
+            regs->pc = arm_getval(cmd, 1);
         } else {
             ++regs->pc;
         }
@@ -404,17 +357,84 @@ end:
     return regs->pc;
 }
 
+static uint emu_run(emu_t *emu, reg_t *regs, char *command)
+{
+    cmd_t cmd = {0};
+    uint len = 0;
+    FILE *instrf = NULL;
+
+    len = strlen(command) > sizeof(cmd.raw_cmd) ?
+        sizeof(cmd.raw_cmd) : strlen(command);
+
+    memcpy(cmd.raw_cmd, command, len);
+    cmd_parse(&cmd);
+
+    switch (emu_getopcode(&cmd)) {
+    case LOAD: {  
+        // Load program from file
+        uint cline = 0;
+        instrf = fopen(cmd.args[1], "r");
+        if (!instrf) {
+            printf("File: %s - opening failed\n", cmd.args[1]);
+            break;
+        }
+
+
+        while (!feof(instrf)) {
+            memset(&cmd, 0, sizeof(cmd));
+            fgets(cmd.raw_cmd, sizeof(cmd.raw_cmd), instrf);
+            cmd_parse(&cmd);
+            emu->prog[cline] = cmd;
+            ++cline;
+        }
+        fclose(instrf);
+
+        emu_printprog(emu);
+
+        // Resolve labels
+        uint i = 0;
+        while (emu->prog[i].raw_cmd[0] != '\0') {
+            if (emu->prog[i].is_label) {
+                printf("Label: %s\n", emu->prog[i].raw_cmd);
+                emu_resolvelabel(emu, &emu->prog[i], i);
+            }
+            ++i;
+        }
+
+        // Run program
+        memset(regs, 0, sizeof(*regs));
+        i = 0;
+        while (emu->prog[regs->pc].raw_cmd[0] != '\0') {
+            arm_run(regs, &(emu->prog[regs->pc]));
+            ++i;
+            if (i > 20) {
+                break;
+            }
+        }
+
+        break;
+    }
+    case STATE:
+        arm_state(regs);
+        break;
+    default:
+        arm_run(regs, &cmd);
+        break;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
-    cmd_t command = {0};
+    emu_t emu = {0};
     reg_t registers = {0};
-    // emu_t emu = {0};
+    char command[COMMAND_SIZE] = {0};
 
     while (true) {
-        memset(&command, 0, sizeof(command));
         printf("%s> ", PROMPT);
-        fgets(command.raw_cmd, sizeof(command.raw_cmd), stdin);
-        arm_run(&registers, &command);
+        fgets(command, sizeof(command), stdin);
+        emu_run(&emu, &registers, command);
     }
 
     return 0;
