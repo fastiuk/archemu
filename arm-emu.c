@@ -103,7 +103,7 @@ static int cmd_parse(cmd_t *cmd)
 
     // Remove all special symbols
     for (uint i = 0; i <= strlen(cmd->raw_cmd); ++i) {
-        // Remove comma
+        // Remove commas
         if (cmd->raw_cmd[i] == ',') {
            cmd->raw_cmd[i] = ' ';
            continue;
@@ -114,9 +114,19 @@ static int cmd_parse(cmd_t *cmd)
            cmd->raw_cmd[i] = '\0';
            continue;
         }
+
+        // Remove tabs
+        if (cmd->raw_cmd[i] == '\t') {
+           cmd->raw_cmd[i] = ' ';
+           continue;
+        }
     }
 
     for (uint i = 0, cont = 1; cont && i < MAX_ARGS; ++i) {
+        while (cmd->raw_cmd[pos1] == ' ') {
+            ++pos1;
+        }
+
         pos = strchr(cmd->raw_cmd + pos1, ' ');
         if (pos) {
             pos2 = pos - cmd->raw_cmd;
@@ -128,9 +138,6 @@ static int cmd_parse(cmd_t *cmd)
         memcpy(cmd->args[i], cmd->raw_cmd + pos1, pos2 - pos1);
         
         pos1 = pos2;
-        while (cmd->raw_cmd[pos1] == ' ') {
-            ++pos1;
-        }
     }
 
     // Check for a label
@@ -233,7 +240,7 @@ static uint arm_getval(cmd_t *cmd, uint argnum)
 
 static void emu_printprog(emu_t *emu)
 {
-    printf("\033[34;1m");
+    printf("\033[33;1m");
     printf("PROG:\n");
     for (uint i = 0; i < NELEMS(emu->prog); ++i) {
         if (emu->prog[i].raw_cmd[0] == '\0') {
