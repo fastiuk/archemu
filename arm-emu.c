@@ -25,7 +25,6 @@ typedef struct {
     char raw_cmd[COMMAND_SIZE];
     char args[MAX_ARGS][ARG_SIZE];  // Command parsed into the next format:
                                     // instruction arg1 arg2 arg3 arg4
-    char is_label;                  // Indicates if parsed line is a label    
 } cmd_t;
 
 // CortexM registers
@@ -76,16 +75,9 @@ static const char emuinstr[][ARG_SIZE] = {
     [STATE] = "state",
 };
 
-// ASM label descriptor
-typedef struct {
-    char label[ARG_SIZE];
-    uint pc;
-} asml_t;
-
 // Emulator descriptor
 typedef struct {
     cmd_t prog[MAX_INSTR];
-    asml_t ld[MAX_INSTR];
 } emu_t;
 
 static int cmd_parse(cmd_t *cmd)
@@ -140,12 +132,14 @@ static int cmd_parse(cmd_t *cmd)
         pos1 = pos2;
     }
 
-    // Check for a label
-    if (cmd->args[0][strlen(cmd->args[0]) - 1] == ':') {
-        cmd->is_label = 1;
-    }
-
     return 0;
+}
+
+static void cmd_remlabel(cmd_t *cmd)
+{
+    for (uint i = 0; i < NELEMS(cmd->args) - 1; ++i) {
+        strncpy(cmd->args[i], cmd->args[i + 1], strlen(cmd->args[i + 1]) + 1);
+    }
 }
 
 static void cmd_print(cmd_t *cmd)
@@ -282,16 +276,28 @@ static void arm_state(reg_t *regs)
     printf("\033[0m");
 }
 
-static void emu_resolvelabel(emu_t *emu, cmd_t *cmd, uint pc)
+static void emu_resolvelabel(emu_t *emu, uint (*is_opcode)(cmd_t *))
 {
-    for (uint i = 0; i < NELEMS(emu->prog); ++i) {
-        // Typically label is arg1 of each supported instruction
-        if (strncmp(cmd->args[0], emu->prog[i].args[1],
-                    strlen(cmd->args[0]) - 1) == 0) {
-            printf("Replacing: %s\n", emu->prog[i].args[1]);
-            snprintf(emu->prog[i].args[1], sizeof(emu->prog[i].args[1]), "#%d", pc);
-            break;
+    uint i = 0;
+    uint argnum = 0;
+
+    while (emu->prog[i].raw_cmd[0] != '\0') {
+        if (!is_opcode(&emu->prog[i])) {
+            // printf("Label: %s\n", emu->prog[i].args[0]);
+            for (uint j = 0; j < NELEMS(emu->prog); ++j) {
+                // Typically label is arg1 of each supported instruction, but if line contains
+                // label it will be arg2
+                argnum = is_opcode(&emu->prog[j]) ? 1 : 2;
+                if (strncmp(emu->prog[i].args[0], emu->prog[j].args[argnum],
+                    strlen(emu->prog[i].args[0])) == 0) {
+                    // printf("Replacing: %s\n", emu->prog[j].args[argnum]);
+                    snprintf(emu->prog[j].args[argnum], sizeof(emu->prog[j].args[argnum]), "#%d", i);
+                    break;
+                }
+            }
+            cmd_remlabel(&emu->prog[i]);
         }
+        ++i;
     }
 }
 
@@ -352,11 +358,9 @@ int arm_run(reg_t *regs, cmd_t *cmd)
         }
         break;
     default:
-        if (cmd->is_label) {
-            ++regs->pc;
-            break;
-        }
+        printf("\033[31m");
         printf("Bad instruction! Trying to execute - %s\n", cmd->raw_cmd);
+        printf("\033[0m");
         break;
     }
 
@@ -386,7 +390,6 @@ static uint emu_run(emu_t *emu, reg_t *regs, char *command)
             break;
         }
 
-
         while (!feof(instrf)) {
             memset(&cmd, 0, sizeof(cmd));
             fgets(cmd.raw_cmd, sizeof(cmd.raw_cmd), instrf);
@@ -399,24 +402,22 @@ static uint emu_run(emu_t *emu, reg_t *regs, char *command)
         emu_printprog(emu);
 
         // Resolve labels
-        uint i = 0;
-        while (emu->prog[i].raw_cmd[0] != '\0') {
-            if (emu->prog[i].is_label) {
-                printf("Label: %s\n", emu->prog[i].raw_cmd);
-                emu_resolvelabel(emu, &emu->prog[i], i);
-            }
-            ++i;
-        }
+        emu_resolvelabel(emu, arm_getopcode);
 
         // Run program
         memset(regs, 0, sizeof(*regs));
-        i = 0;
+        uint ppc = regs->pc;
+        uint cpc = regs->pc;
         while (emu->prog[regs->pc].raw_cmd[0] != '\0') {
             arm_run(regs, &(emu->prog[regs->pc]));
-            ++i;
-            if (i > 20) {
+            cpc = regs->pc;
+            if (cpc == ppc) {
+                printf("\033[31;1m");
+                printf("Executing loop instruction. Halting\n");
+                printf("\033[0m");
                 break;
             }
+            ppc = cpc;
         }
 
         break;
