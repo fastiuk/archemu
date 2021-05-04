@@ -6,7 +6,7 @@ r2ltr1  mov r2, r1
         mov r1, #30
         cmp r2, r1
         blt r2ltr1
-        mov r0, #20
-        mov r3, #30
+        mov r0, #0x20
+        mov r3, #0x30
         cmp r0, r3
 halt    blt halt

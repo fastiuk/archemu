@@ -223,10 +223,7 @@ static uint arm_getval(cmd_t *cmd, uint argnum)
     uint val = -1;
 
     if (cmd->args[argnum][0] == '#') {
-        if ((cmd->args[argnum][1] == '0') && (cmd->args[argnum][2] == 'x')) {
-            val = strtol(cmd->args[argnum] + 3, NULL, 16);
-        }
-        val = strtol(cmd->args[argnum] + 1, NULL, 10);
+        val = strtol(cmd->args[argnum] + 1, NULL, 0);
     }
 
     return val;
